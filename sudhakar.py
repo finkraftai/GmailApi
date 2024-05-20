@@ -35,7 +35,18 @@ def save_msg_attachment(attachment_data, filename, folder_path):
         msg.save(customPath=folder_path)
         print(f"MSG attachment '{filename}' extracted and saved to '{folder_path}'.")
     except Exception as e:
-        print(f"Error saving MSG attachment '{filename}': {e}")    
+        print(f"Error saving MSG attachment '{filename}': {e}")
+
+def save_eml_attachments(msg, folder_path):
+    """Extract and save attachments from an EML message object."""
+    for part in msg.walk():
+        if part.get_content_maintype() == 'multipart':
+            continue
+        attachment_name = part.get_filename()
+        if attachment_name:
+            attachment_data = part.get_payload(decode=True)
+            attachment_name = os.path.basename(attachment_name)  # Ensure filename is just the name, not the path
+            save_attachment(attachment_data, attachment_name, folder_path)
 
 def save_attachment(attachment_data, filename, folder_path):
     """Save attachment to the specified folder."""
@@ -47,16 +58,10 @@ def save_attachment(attachment_data, filename, folder_path):
     elif filename.lower().endswith('.eml'):
         with open(file_path, 'wb') as f:
             f.write(attachment_data)
+        print(f"EML attachment '{filename}' saved to '{folder_path}'. Extracting nested attachments...")
         with open(file_path, 'rb') as f:
             msg = email.message_from_binary_file(f)
-            for part in msg.walk():
-                if part.get_content_maintype() == 'multipart':
-                    continue
-                attachment_name = part.get_filename()
-                if attachment_name:
-                    attachment_data = part.get_payload(decode=True)
-                    save_attachment(attachment_data, attachment_name, folder_path)
-        print(f"EML attachment '{filename}' extracted and saved to '{folder_path}'.")
+            save_eml_attachments(msg, folder_path)
     elif filename.lower().endswith('.msg'):
         save_msg_attachment(attachment_data, filename, folder_path)
     else:
@@ -128,21 +133,27 @@ def main():
     service = build("gmail", "v1", credentials=creds)
     user_id = "me"
     
-    filters_label_id = get_label_id(service, user_id, "n")
+    filters_label_id = get_label_id(service, user_id, "e")
     if not filters_label_id:
-        filters_label_id = create_label(service, user_id, "n")
+        filters_label_id = create_label(service, user_id, "e")
     
-    start_date = datetime(2024, 5, 13).strftime('%Y-%m-%d')
-    end_date = datetime(2024, 5, 14).strftime('%Y-%m-%d')
-    count_emails_per_day(service, user_id, start_date, end_date)
+    start_datetime = datetime(2024, 5, 19, 14, 0)  
+    end_datetime = datetime(2024, 5, 20, 14, 0)  
+    
+    start_timestamp = int(start_datetime.timestamp())
+    end_timestamp = int(end_datetime.timestamp())
+    
+    count_emails_per_day(service, user_id, start_timestamp, end_timestamp)
 
     try:
-        query = f"after:{start_date} before:{end_date}"
+        query = f"after:{start_timestamp} before:{end_timestamp}"
+        print(f"Querying emails with: {query}")
         page_token = None
         messages = []
         while True:
             results = service.users().messages().list(userId=user_id, q=query, pageToken=page_token).execute()
             messages.extend(results.get("messages", []))
+            print(f"Found {len(messages)} messages")
             page_token = results.get("nextPageToken")
             if not page_token:
                 break
@@ -172,8 +183,10 @@ def main():
                             except ValueError:
                                 pass
                     
+                    print(f"Processing message with subject: {subject}")
+
                     service.users().messages().modify(userId=user_id, id=message["id"], body={"addLabelIds": [filters_label_id]}).execute()
-                    print(f"Message with subject '{subject}' filtered and labeled as 'filters'.")
+                    print(f"Message with subject '{subject}' filtered and labeled as 'n'.")
 
                     attachment_count = 0
                     downloaded_count = 0
